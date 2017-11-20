@@ -27,14 +27,20 @@ import pandas as pd
 #----------------USER INFO-----------------
 #------------------------------------------
 
-identifier = "tip3p_216"
+#Skip equilibration? Use if we previously equilibrated, to load stored
+#trajectory file and jump straight into production
+skip_equilibration = False
+
+#identifier = "tip3p_216"
+identifier = "tip3p_modified2_216"
 
 DATA_PATH = ""
 RESULT_PATH = "./results/"
 
 xml_filename = os.path.join(DATA_PATH, identifier + ".xml")
 
-md_platform = 'Reference' # e.g. Reference or CUDA
+#md_platform = 'Reference' # e.g. Reference or CUDA
+md_platform = 'OpenCL'
 pdb_filename = 'spc216.pdb'
 
 #--------------MINIMIZATION----------------
@@ -49,7 +55,8 @@ NVT_TIME_STEP = 1.0 * femtoseconds
 NVT_STEPS = 50000
 NVT_FRICTION = 1.0 / picoseconds
 NVT_PLATFORM = Platform.getPlatformByName(md_platform)
-if md_platform != 'Reference':
+NVT_PROPERTIES = {'DeviceIndex':1} # TEST
+if md_platform == 'CUDA':
     NVT_PROPERTIES = {'CudaPrecision': 'mixed'}
 else: NVT_PROPERTIES={}
 NVT_OUTPUT_FREQ = 10000
@@ -61,8 +68,7 @@ NPT_STEPS = 5000000
 NPT_FRICTION = 1.0 / picoseconds
 BAROSTAT_FREQUENCY = 25
 NPT_PLATFORM = Platform.getPlatformByName(md_platform)
-NPT_PROPERTIES = {'CudaPrecision': 'mixed'}
-if md_platform != 'Reference':
+if md_platform == 'CUDA':
     NPT_PROPERTIES = {'CudaPrecision': 'mixed'}
 else: NPT_PROPERTIES={}
 NPT_OUTPUT_FREQ = 500000
@@ -70,10 +76,10 @@ NPT_DATA_FREQ = 500000
 
 #--------------PRODUCTION------------------
 PROD_TIME_STEP = 2.0 * femtoseconds
-PROD_STEPS = 500
+PROD_STEPS = 50000
 PROD_FRICTION = 1.0 / picoseconds
 PROD_PLATFORM = Platform.getPlatformByName(md_platform)
-if md_platform != 'Reference':
+if md_platform == 'CUDA':
     PROD_PROPERTIES = {'CudaPrecision': 'mixed'}
 else: PROD_PROPERTIES={}
 PROD_OUTPUT_FREQ = 500
@@ -158,6 +164,14 @@ def nvt(coords):
 
     # Set Simulation
     simulation = app.Simulation(pdb.topology, system, integrator, NVT_PLATFORM, NVT_PROPERTIES)
+
+    #DEBUG STUFF
+    properties = NVT_PLATFORM.getPropertyValue(simulation.context, 'DeviceIndex')
+    print(properties)
+    print(NVT_PLATFORM.getPropertyNames())
+    print(NVT_PLATFORM.getSpeed())
+    #DEBUG STUFF
+
 
     # Set Position and velocities
     simulation.context.setPositions(coords)
@@ -251,7 +265,10 @@ def production(coords, velocities, box):
 
     # Set Position and velocities
     simulation.context.setPositions(coords)
-    simulation.context.setVelocities(velocities)
+    if velocities is not None:
+        simulation.context.setVelocities(velocities)
+    else: #reset
+        simulation.context.setVelocitiesToTemperature(TEMPERATURE)
 
     # Set Box
     #box = box.in_units_of(nanometer)
@@ -309,7 +326,18 @@ if __name__=='__main__':
     make_path(RESULT_PATH + 'prod/')
 
 
-    coords = minimization()
-    coords, velocities = nvt(coords)
-    coords, velocities, box = npt(coords, velocities)
+    if not skip_equilibration:
+        coords = minimization()
+        coords, velocities = nvt(coords)
+        coords, velocities, box = npt(coords, velocities)
+    else:
+        import mdtraj as md
+        # Load dcd file with relevant INFO
+        traj = md.load_dcd( npt_dcd_filename, pdb_filename )
+        coords = traj.xyz[-1]
+        #velocities = traj.velocities[-1]
+        box = traj.unitcell_vectors[-1]
+        #DCD file seems not to have velocities; set to None to trigger a reset to temperature
+        velocities = None
+
     production(coords, velocities, box)
